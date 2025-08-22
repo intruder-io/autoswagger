@@ -779,7 +779,7 @@ def test_endpoint(base_url, base_path, path_template, method, parameters, reques
 
 def test_endpoints(base_url, base_path, swagger_spec, verbose=False,
                    include_risk=False, include_all=False, product_mode=False,
-                   rate=30, tried_basepath_fallback=False, brute=False):
+                   rate=30, tried_basepath_fallback=False, brute=False, limit="", discover=False):
     """
     Iterates over all paths and methods in the provided swagger_spec.
     Submits tasks to test_endpoint if the method is allowed (GET or others if -risk).
@@ -794,6 +794,22 @@ def test_endpoints(base_url, base_path, swagger_spec, verbose=False,
     unique_endpoints = set()
     all_results = []
     max_workers = min(100, os.cpu_count() * 5)
+
+    # Base path contains a domain, use it as well!
+    if (base_path.startswith("http://") or base_path.startswith("https://")):
+        parsed_base_path = urlparse(base_path)
+        if discover:
+            rslts = test_endpoints(base_path, parsed_base_path.path, swagger_spec, verbose=verbose, include_risk=include_risk, include_all=include_all, product_mode=product_mode, rate=rate, tried_basepath_fallback=tried_basepath_fallback, brute=brute, limit=limit, discover=False)
+            all_results.extend(rslts)
+
+        base_path = parsed_base_path.path
+
+    if limit and not base_url.startswith(limit):
+        if verbose:
+            parsed_base_url = urlparse(base_url)
+            base_url_no_path = f"{parsed_base_url.scheme}://{parsed_base_url.netloc}"
+            log(f"Skipping base URL '{base_url_no_path}' as it does not match the limit prefix.", level="INFO")
+        return results
 
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         future_to_endpoint = {}
@@ -873,7 +889,7 @@ def test_endpoints(base_url, base_path, swagger_spec, verbose=False,
                 fallback = test_endpoints(
                     base_url, '/', swagger_spec, verbose,
                     include_risk, include_all, product_mode=product_mode,
-                    rate=rate, tried_basepath_fallback=True, brute=brute
+                    rate=rate, tried_basepath_fallback=True, brute=brute, limit=limit, discover=discover
                 )
                 return fallback
 
@@ -1125,7 +1141,7 @@ def process_input(urls):
         processed.append(url)
     return processed
 
-def main(urls, verbose, include_risk, include_all, product_mode, stats_flag, rate, brute, json_output):
+def main(urls, verbose, include_risk, include_all, product_mode, stats_flag, rate, brute, json_output, limit, discover):
     """
     Main function controlling flow:
     1. Tracks start time
@@ -1185,7 +1201,8 @@ def main(urls, verbose, include_risk, include_all, product_mode, stats_flag, rat
                 rslts = test_endpoints(
                     base_url, base_path, swagger_spec,
                     verbose, include_risk, include_all,
-                    product_mode=product_mode, rate=rate, brute=brute
+                    product_mode=product_mode, rate=rate, brute=brute, 
+                    limit=limit, discover=discover
                 )
                 del swagger_spec
                 with results_lock:
@@ -1222,7 +1239,8 @@ def main(urls, verbose, include_risk, include_all, product_mode, stats_flag, rat
             rslts = test_endpoints(
                 base_url, base_path, swagger_spec,
                 verbose, include_risk, include_all,
-                product_mode=product_mode, rate=rate, brute=brute
+                product_mode=product_mode, rate=rate, brute=brute, 
+                limit=limit, discover=discover
             )
             del swagger_spec
             with results_lock:
@@ -1259,7 +1277,8 @@ def main(urls, verbose, include_risk, include_all, product_mode, stats_flag, rat
                 rslts2 = test_endpoints(
                     base_url, base_path, sws,
                     verbose, include_risk, include_all,
-                    product_mode=product_mode, rate=rate, brute=brute
+                    product_mode=product_mode, rate=rate, brute=brute, 
+                    limit=limit, disocver=discover
                 )
                 del sws
                 with results_lock:
@@ -1464,6 +1483,8 @@ if __name__ == "__main__":
     parser.add_argument("-rate", type=int, default=30, help="Set the rate limit in requests per second (default: 30). Use 0 to disable rate limiting.")
     parser.add_argument("-b", "--brute", action="store_true", help="Enable exhaustive testing of parameter values.")
     parser.add_argument("-json", action="store_true", help="Output results in JSON format in default mode.")
+    parser.add_argument("-limit", type=str, default="", help="Limit scan to url prefix.")
+    parser.add_argument("-d", "--discover", action="store_true", help="Discover additional domains from the spec.")
 
     args = parser.parse_args()
 
@@ -1485,6 +1506,8 @@ if __name__ == "__main__":
     rate = args.rate
     brute = args.brute
     json_output = args.json
+    limit = args.limit
+    discover = args.discover
 
     # Set up file logging if verbose is enabled
     if verbose:
@@ -1498,4 +1521,4 @@ if __name__ == "__main__":
         logger.addHandler(file_handler)
         logger.propagate = False
 
-    main(urls, verbose, include_risk, include_all, product_mode, stats_flag, rate, brute, json_output)
+    main(urls, verbose, include_risk, include_all, product_mode, stats_flag, rate, brute, json_output, limit, discover)
