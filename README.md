@@ -12,15 +12,20 @@
 ---
 
 ## Table of Contents
-1. [Introduction](#introduction)
-2. [Key Features](#key-features)
-3. [Installation & Usage](#installation--usage)
-4. [Discovery Phases](#discovery-phases)
-5. [Endpoint Testing](#endpoint-testing)
-6. [PII Detection](#pii-detection)
-7. [Output Examples](#output)
-8. [Stats & Reporting](#stats--reporting)
-9. [Acknowledgments](#acknowledgments)
+- [Autoswagger by Intruder](#autoswagger-by-intruder)
+  - [Table of Contents](#table-of-contents)
+  - [Introduction](#introduction)
+  - [Key Features](#key-features)
+  - [Installation \& Usage](#installation--usage)
+  - [Flags](#flags)
+  - [Help](#help)
+  - [Discovery Phases](#discovery-phases)
+  - [Endpoint Testing](#endpoint-testing)
+  - [PII Detection](#pii-detection)
+  - [Output](#output)
+  - [Interpreting Results](#interpreting-results)
+  - [Stats \& Reporting](#stats--reporting)
+  - [Acknowledgments](#acknowledgments)
 
 ---
 
@@ -80,17 +85,19 @@ Autoswagger automates the process of finding **OpenAPI/Swagger** specifications,
 
 ## Flags 
 
-| Flag                 | Description                                                                                                 |
-|----------------------|-------------------------------------------------------------------------------------------------------------|
-| `urls`               | List of base URLs or direct spec URLs.                                                                       |
-| `-v, --verbose`      | Enables verbose logging. Creates a log file under `~/.autoswagger/logs`.                                     |
-| `-risk`              | Includes non-GET methods (POST, PUT, PATCH, DELETE) in testing.                                              |
-| `-all`               | Includes 200 and 404 endpoints in output (excludes 401/403).                                                 |
-| `-product`           | Outputs only endpoints with PII or large responses, in JSON format.                                          |
-| `-stats`             | Displays scan statistics (e.g. requests, RPS, hosts with PII).                                               |
-| `-rate <N>`          | Throttles requests to N requests per second. Default is 30. Use 0 to disable rate limiting.                  |
-| `-b, --brute`        | Enables brute-forcing of parameter values (multiple test combos).                                            |
-| `-json`              | Outputs results in JSON format instead of a Rich table in default mode.                                      |
+| Flag             | Description                                                                                 |
+| ---------------- | ------------------------------------------------------------------------------------------- |
+| `urls`           | List of base URLs or direct spec URLs.                                                      |
+| `-v, --verbose`  | Enables verbose logging. Creates a log file under `~/.autoswagger/logs`.                    |
+| `-risk`          | Includes non-GET methods (POST, PUT, PATCH, DELETE) in testing.                             |
+| `-all`           | Includes 200 and 404 endpoints in output (excludes 401/403).                                |
+| `-product`       | Outputs only endpoints with PII or large responses, in JSON format.                         |
+| `-stats`         | Displays scan statistics (e.g. requests, RPS, hosts with PII).                              |
+| `-rate <N>`      | Throttles requests to N requests per second. Default is 30. Use 0 to disable rate limiting. |
+| `-b, --brute`    | Enables brute-forcing of parameter values (multiple test combos).                           |
+| `-json`          | Outputs results in JSON format instead of a Rich table in default mode.                     |
+| `-d, --discover` | Add URLs from the specs `server` object to the scan.                                        |
+| `-l, --limit`    | Limit the scan to the given URL prefix.                                                     |
 
 
 ## Help
