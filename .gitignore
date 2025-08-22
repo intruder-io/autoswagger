@@ -5,6 +5,8 @@ logs/*
 testing*/
 venv/*
 venv
+.venv/*
+.venv
 env/*
 env
 *.log
