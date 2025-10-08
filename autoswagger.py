@@ -457,7 +457,7 @@ def is_large_response(content):
         pass
     return False
 
-def test_parameter_values(method, base_url_no_path, full_path, parameters, request_body, content_type, rate, include_all, verbose, brute=False):
+def test_parameter_values(method, headers, base_url_no_path, full_path, parameters, request_body, content_type, rate, include_all, verbose, brute=False):
     """
     Tests parameter values for a given method/endpoint.
     If brute is false, only a single default set is tested.
@@ -480,7 +480,7 @@ def test_parameter_values(method, base_url_no_path, full_path, parameters, reque
     # Default mode: one request
     if not brute:
         response = send_request(
-            method, base_url_no_path, full_path, parameters,
+            method, headers, base_url_no_path, full_path, parameters,
             value_mapping, request_body, content_type, rate, include_all, verbose
         )
         return [response] if response else []
@@ -508,7 +508,7 @@ def test_parameter_values(method, base_url_no_path, full_path, parameters, reque
             for combo in combos:
                 val_map = {n: v for n, v in zip(value_mapping.keys(), combo)}
                 resp = send_request(
-                    method, base_url_no_path, full_path, parameters,
+                    method, headers, base_url_no_path, full_path, parameters,
                     val_map, request_body, content_type, rate, include_all, verbose
                 )
                 if resp:
@@ -524,7 +524,7 @@ def test_parameter_values(method, base_url_no_path, full_path, parameters, reque
                 for combo in first_combos:
                     val_map = {n: v for n, v in zip(value_mapping.keys(), combo)}
                     resp = send_request(
-                        method, base_url_no_path, full_path, parameters,
+                        method, headers, base_url_no_path, full_path, parameters,
                         val_map, request_body, content_type, rate, include_all, verbose
                     )
                     if resp:
@@ -534,7 +534,7 @@ def test_parameter_values(method, base_url_no_path, full_path, parameters, reque
                         for combo2 in second_combos:
                             val_map2 = {n: v2 for n, v2 in zip(value_mapping.keys(), combo2)}
                             resp2 = send_request(
-                                method, base_url_no_path, full_path, parameters,
+                                method, headers, base_url_no_path, full_path, parameters,
                                 val_map2, request_body, content_type, rate, include_all, verbose
                             )
                             if resp2 and resp2['content_length'] > max_clen:
@@ -543,7 +543,7 @@ def test_parameter_values(method, base_url_no_path, full_path, parameters, reque
                         return [best_response]
     return []
 
-def send_request(method, base_url_no_path, full_path, parameters, value_mapping, request_body, content_type, rate, include_all, verbose):
+def send_request(method, headers, base_url_no_path, full_path, parameters, value_mapping, request_body, content_type, rate, include_all, verbose):
     """
     Sends a request to the computed endpoint, respecting rate limit.
     Decodes the response, checks for secrets, PII (via line-based CSV and key:value scanning),
@@ -567,7 +567,8 @@ def send_request(method, base_url_no_path, full_path, parameters, value_mapping,
         else:
             full_url = urljoin(base_url_no_path, substituted_path)
 
-    headers = {'Content-Type': content_type} if content_type else {}
+    # headers = {'Content-Type': content_type} if content_type else {}
+    headers.update({'Content-Type': content_type} if content_type else {})
     data = request_body if method.upper() in ['POST', 'PUT', 'PATCH'] else None
 
     try:
@@ -741,7 +742,7 @@ def send_request(method, base_url_no_path, full_path, parameters, value_mapping,
             log(f"Error testing {method.upper()} {full_url}: {e}", level="DEBUG")
     return None
 
-def test_endpoint(base_url, base_path, path_template, method, parameters, request_body=None,
+def test_endpoint(base_url, headers, base_path, path_template, method, parameters, request_body=None,
                   content_type=None, verbose=False, rate=30, include_all=False,
                   product_mode=False, brute=False):
     """
@@ -762,7 +763,7 @@ def test_endpoint(base_url, base_path, path_template, method, parameters, reques
     try:
         start_time = time.time()
         endpoint_results = test_parameter_values(
-            method, base_url_no_path, full_path, parameters,
+            method, headers, base_url_no_path, full_path, parameters,
             request_body, content_type, rate, include_all, verbose, brute=brute
         )
         if endpoint_results:
@@ -777,7 +778,7 @@ def test_endpoint(base_url, base_path, path_template, method, parameters, reques
 
     return results
 
-def test_endpoints(base_url, base_path, swagger_spec, verbose=False,
+def test_endpoints(base_url, headers, base_path, swagger_spec, verbose=False,
                    include_risk=False, include_all=False, product_mode=False,
                    rate=30, tried_basepath_fallback=False, brute=False):
     """
@@ -826,7 +827,7 @@ def test_endpoints(base_url, base_path, swagger_spec, verbose=False,
                         request_body = build_request_body(schema, ct)
                         fut = executor.submit(
                             test_endpoint,
-                            base_url, base_path, path, mthd,
+                            base_url, headers, base_path, path, mthd,
                             parameters, request_body, ct,
                             verbose, rate, include_all,
                             product_mode=product_mode, brute=brute
@@ -842,7 +843,7 @@ def test_endpoints(base_url, base_path, swagger_spec, verbose=False,
                     request_body = build_request_body(schema, 'application/json')
                     fut = executor.submit(
                         test_endpoint,
-                        base_url, base_path, path, mthd,
+                        base_url, headers, base_path, path, mthd,
                         parameters, request_body, 'application/json',
                         verbose, rate, include_all,
                         product_mode=product_mode, brute=brute
@@ -871,7 +872,7 @@ def test_endpoints(base_url, base_path, swagger_spec, verbose=False,
                     log("Basepath fallback triggered. Retesting endpoints with basepath '/'.", level="INFO")
                 all_results.clear()
                 fallback = test_endpoints(
-                    base_url, '/', swagger_spec, verbose,
+                    base_url, headers, '/', swagger_spec, verbose,
                     include_risk, include_all, product_mode=product_mode,
                     rate=rate, tried_basepath_fallback=True, brute=brute
                 )
@@ -879,7 +880,7 @@ def test_endpoints(base_url, base_path, swagger_spec, verbose=False,
 
     return all_results
 
-def fetch_swagger_spec(url, verbose=False):
+def fetch_swagger_spec(url, headers, verbose=False):
     """
     Attempts to fetch and parse an OpenAPI/Swagger spec from a given URL.
     Checks if response code is 200, content is JSON/YAML, and contains 'swagger'/'openapi'.
@@ -888,7 +889,7 @@ def fetch_swagger_spec(url, verbose=False):
     if verbose:
         log(f"Fetching Swagger/OpenAPI spec directly from {url}", level="DEBUG")
     try:
-        resp = requests.get(url, verify=False, timeout=TIMEOUT)
+        resp = requests.get(url, headers=headers, verify=False, timeout=TIMEOUT)
         ctype = resp.headers.get('Content-Type', '').lower()
         if resp.status_code == 200 and any(x in ctype for x in ['json','yaml','text/plain']):
             if 'swagger' in resp.text.lower() or 'openapi' in resp.text.lower():
@@ -914,7 +915,7 @@ def fetch_swagger_spec(url, verbose=False):
             log(f"Failed to parse spec from {url}", level="DEBUG")
     return None
 
-def find_swagger_ui_docs(base_url, verbose=False):
+def find_swagger_ui_docs(base_url, headers, verbose=False):
     """
     Attempts to detect a Swagger UI at known paths by scanning for references
     to swagger/openapi in the HTML or embedded JavaScript. If found, attempts
@@ -925,7 +926,7 @@ def find_swagger_ui_docs(base_url, verbose=False):
         if verbose:
             log(f"Checking Swagger UI page at {swagger_ui_url}", level="DEBUG")
         try:
-            r = requests.get(swagger_ui_url, verify=False, allow_redirects=False, timeout=TIMEOUT)
+            r = requests.get(swagger_ui_url, headers=headers, verify=False, allow_redirects=False, timeout=TIMEOUT)
             if r.status_code == 200 and ('swagger' in r.text.lower() or 'openapi' in r.text.lower()):
                 if verbose:
                     log(f"Swagger UI found at {swagger_ui_url}", level="DEBUG")
@@ -935,7 +936,7 @@ def find_swagger_ui_docs(base_url, verbose=False):
                     if verbose:
                         log(f"Found Swagger spec URL in HTML: {full_spec_url}", level="DEBUG")
                     if any(full_spec_url.lower().endswith(ext) for ext in ['.json', '.yaml', '.yml']):
-                        sp = fetch_swagger_spec(full_spec_url, verbose)
+                        sp = fetch_swagger_spec(full_spec_url, headers, verbose)
                         if sp:
                             return sp
                     else:
@@ -943,7 +944,7 @@ def find_swagger_ui_docs(base_url, verbose=False):
                             log(f"Spec URL does not have a valid spec extension: {full_spec_url}", level="DEBUG")
                         if full_spec_url.lower().endswith('.js'):
                             try:
-                                js_r = requests.get(full_spec_url, verify=False, timeout=TIMEOUT)
+                                js_r = requests.get(full_spec_url, headers=headers, verify=False, timeout=TIMEOUT)
                                 if js_r.status_code == 200:
                                     if verbose:
                                         log(f"Attempting to extract embedded spec from JS file: {full_spec_url}", level="DEBUG")
@@ -967,7 +968,7 @@ def find_swagger_ui_docs(base_url, verbose=False):
                     if verbose:
                         log(f"Fetching JS file: {jsu}", level="DEBUG")
                     try:
-                        js_resp = requests.get(jsu, verify=False, timeout=TIMEOUT)
+                        js_resp = requests.get(jsu, headers=headers, verify=False, timeout=TIMEOUT)
                         if js_resp.status_code == 200:
                             spec_url_js = extract_spec_url_from_js(js_resp.text)
                             if spec_url_js:
@@ -975,13 +976,13 @@ def find_swagger_ui_docs(base_url, verbose=False):
                                 if verbose:
                                     log(f"Found Swagger spec URL in JS: {full_spec_url_js}", level="DEBUG")
                                 if any(full_spec_url_js.lower().endswith(ext) for ext in ['.json', '.yaml', '.yml']):
-                                    sp2 = fetch_swagger_spec(full_spec_url_js, verbose)
+                                    sp2 = fetch_swagger_spec(full_spec_url_js, headers, verbose)
                                     if sp2:
                                         return sp2
                                 else:
                                     if full_spec_url_js.lower().endswith('.js'):
                                         try:
-                                            nested_js = requests.get(full_spec_url_js, verify=False, timeout=TIMEOUT)
+                                            nested_js = requests.get(full_spec_url_js, headers=headers, verify=False, timeout=TIMEOUT)
                                             if nested_js.status_code == 200:
                                                 emb2 = extract_spec_from_js(nested_js.text)
                                                 if emb2 and isinstance(emb2, dict):
@@ -1004,7 +1005,7 @@ def find_swagger_ui_docs(base_url, verbose=False):
                     full_swash_url = urljoin(swagger_ui_url, spec_url_swash)
                     if verbose:
                         log(f"Found Swagger spec URL via swashbuckleConfig: {full_swash_url}", level="DEBUG")
-                    sp3 = fetch_swagger_spec(full_swash_url, verbose)
+                    sp3 = fetch_swagger_spec(full_swash_url, headers, verbose)
                     if sp3:
                         return sp3
         except requests.exceptions.RequestException as e:
@@ -1125,7 +1126,20 @@ def process_input(urls):
         processed.append(url)
     return processed
 
-def main(urls, verbose, include_risk, include_all, product_mode, stats_flag, rate, brute, json_output):
+def parse_header_argument(header):
+    """
+    Validate header passed from CLI as string eg:
+    User-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:142.0) Gecko/20100101 Firefox/142.0
+    """
+    items = header.split(":")
+    if len(items) < 2:
+        raise argparse.ArgumentTypeError(f"Invalid header value: {header}, expecting key: value")
+
+    key = items[0].strip()
+    value = ':'.join(items[1:]).strip()
+    return {key: value}
+
+def main(urls, headers, verbose, include_risk, include_all, product_mode, stats_flag, rate, brute, json_output):
     """
     Main function controlling flow:
     1. Tracks start time
@@ -1169,7 +1183,7 @@ def main(urls, verbose, include_risk, include_all, product_mode, stats_flag, rat
         if any(base_url.lower().endswith(ext) for ext in ['.json', '.yaml', '.yml']):
             if not product_mode:
                 log(f"Processing direct spec URL: {base_url}", level="INFO")
-            swagger_spec = fetch_swagger_spec(base_url, verbose)
+            swagger_spec = fetch_swagger_spec(base_url, headers, verbose)
             if swagger_spec:
                 with lock:
                     stats["hosts_with_valid_spec"] += 1
@@ -1183,7 +1197,7 @@ def main(urls, verbose, include_risk, include_all, product_mode, stats_flag, rat
                 if not product_mode:
                     log("Scanning endpoints.", level="INFO")
                 rslts = test_endpoints(
-                    base_url, base_path, swagger_spec,
+                    base_url, headers, base_path, swagger_spec,
                     verbose, include_risk, include_all,
                     product_mode=product_mode, rate=rate, brute=brute
                 )
@@ -1206,7 +1220,7 @@ def main(urls, verbose, include_risk, include_all, product_mode, stats_flag, rat
                 return
 
         # Phase 1 & 2: Look for swagger UI
-        swagger_spec = find_swagger_ui_docs(base_url, verbose)
+        swagger_spec = find_swagger_ui_docs(base_url, headers, verbose)
         if swagger_spec:
             with lock:
                 stats["hosts_with_valid_spec"] += 1
@@ -1220,7 +1234,7 @@ def main(urls, verbose, include_risk, include_all, product_mode, stats_flag, rat
             if not product_mode:
                 log("Scanning endpoints.", level="INFO")
             rslts = test_endpoints(
-                base_url, base_path, swagger_spec,
+                base_url, headers, base_path, swagger_spec,
                 verbose, include_risk, include_all,
                 product_mode=product_mode, rate=rate, brute=brute
             )
@@ -1243,7 +1257,7 @@ def main(urls, verbose, include_risk, include_all, product_mode, stats_flag, rat
             spec_url = urljoin(base_url, pth)
             if verbose:
                 log(f"Attempting to fetch spec from direct path: {spec_url}", level="DEBUG")
-            sws = fetch_swagger_spec(spec_url, verbose)
+            sws = fetch_swagger_spec(spec_url, headers, verbose)
             if sws:
                 with lock:
                     stats["hosts_with_valid_spec"] += 1
@@ -1257,7 +1271,7 @@ def main(urls, verbose, include_risk, include_all, product_mode, stats_flag, rat
                 if not product_mode:
                     log("Scanning endpoints.", level="INFO")
                 rslts2 = test_endpoints(
-                    base_url, base_path, sws,
+                    base_url, headers, base_path, sws,
                     verbose, include_risk, include_all,
                     product_mode=product_mode, rate=rate, brute=brute
                 )
@@ -1456,6 +1470,8 @@ if __name__ == "__main__":
         epilog="Example usage:\n  python autoswagger.py https://api.example.com -v "
     )
     parser.add_argument("urls", nargs="*", help="Base URL(s) or spec URL(s) of the target API(s)")
+    parser.add_argument("-headers", type=parse_header_argument, default=[], action="extend", nargs='*',
+                        help="Add custom headers")
     parser.add_argument("-v", "--verbose", action="store_true", help="Enable verbose output")
     parser.add_argument("-risk", action="store_true", help="Include non-GET requests in testing")
     parser.add_argument("-all", action="store_true", help="Include all HTTP status codes in the results, excluding 401 and 403")
@@ -1476,6 +1492,11 @@ if __name__ == "__main__":
         print_banner()
         parser.print_help()
         sys.exit()
+
+    # merge headers into one dict
+    headers = {}
+    for item in args.headers:
+        headers.update(item)
 
     product_mode = args.product
     verbose = args.verbose
@@ -1498,4 +1519,4 @@ if __name__ == "__main__":
         logger.addHandler(file_handler)
         logger.propagate = False
 
-    main(urls, verbose, include_risk, include_all, product_mode, stats_flag, rate, brute, json_output)
+    main(urls, headers, verbose, include_risk, include_all, product_mode, stats_flag, rate, brute, json_output)
