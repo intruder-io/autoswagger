@@ -555,17 +555,16 @@ def send_request(method, base_url_no_path, full_path, parameters, value_mapping,
     substituted_path = substitute_path_parameters(full_path, parameters, value_mapping)
     query_string = generate_query_string(parameters, value_mapping)
 
-    if not substituted_path.startswith('/'):
-        substituted_path = '/' + substituted_path
+    if substituted_path.startswith('/') and base_url_no_path.endswith('/'):
+        substituted_path = substituted_path[1:]
 
     parsed_path = urlparse(substituted_path)
     if parsed_path.scheme in ['http', 'https']:
-        full_url = substituted_path
+        full_url = substituted_path  # Use the absolute URL directly
     else:
+        full_url = urljoin(base_url_no_path, substituted_path)
         if query_string:
-            full_url = f"{urljoin(base_url_no_path, substituted_path)}?{query_string}"
-        else:
-            full_url = urljoin(base_url_no_path, substituted_path)
+            full_url = f"{full_url}?{query_string}"
 
     headers = {'Content-Type': content_type} if content_type else {}
     data = request_body if method.upper() in ['POST', 'PUT', 'PATCH'] else None
@@ -881,10 +880,35 @@ def test_endpoints(base_url, base_path, swagger_spec, verbose=False,
 
 def fetch_swagger_spec(url, verbose=False):
     """
-    Attempts to fetch and parse an OpenAPI/Swagger spec from a given URL.
-    Checks if response code is 200, content is JSON/YAML, and contains 'swagger'/'openapi'.
+    Attempts to fetch and parse an OpenAPI/Swagger spec from a given URL or local file.
+    - If the input is a local file, reads and parses it as JSON or YAML.
+    - If the input is a URL, checks if the response code is 200, the content is JSON/YAML, and contains 'swagger'/'openapi'.
     Returns the parsed spec as a dictionary or None if unsuccessful.
     """
+    if os.path.isfile(url):
+        if verbose:
+            log(f"Loading Swagger/OpenAPI spec from local file: {url}", level="DEBUG")
+        try:
+            with open(url, 'r', encoding='utf-8') as file:
+                content = file.read()
+                if url.lower().endswith(('.json', '.yaml', '.yml')):
+                    try:
+                        if url.lower().endswith('.json'):
+                            spec = json.loads(content)
+                        else:
+                            spec = yaml.safe_load(content)
+                        if verbose:
+                            log("Successfully loaded spec from local file.", level="SUCCESS")
+                        return spec
+                    except (json.JSONDecodeError, yaml.YAMLError) as perr:
+                        if verbose:
+                            log(f"Error decoding spec from local file {url}: {perr}", level="DEBUG")
+        except Exception as e:
+            if verbose:
+                log(f"Error reading local file {url}: {e}", level="DEBUG")
+        return None
+
+    # If not a local file, treat as a URL
     if verbose:
         log(f"Fetching Swagger/OpenAPI spec directly from {url}", level="DEBUG")
     try:
@@ -1114,15 +1138,20 @@ def js_object_to_json(js_object_str):
 
 def process_input(urls):
     """
-    Ensures each URL has a valid scheme (http or https).
-    If not present, prepends https:// to the beginning.
+    Ensures each input is either a valid URL or a local file path.
+    If it's a URL without a scheme, prepends https://.
     """
     processed = []
     for url in urls:
-        parsed = urlparse(url)
-        if not parsed.scheme:
-            url = 'https://' + url
-        processed.append(url)
+        if os.path.isfile(url):
+            # If it's a local file, add it directly
+            processed.append(url)
+        else:
+            # Otherwise, treat it as a URL
+            parsed = urlparse(url)
+            if not parsed.scheme:
+                url = 'https://' + url
+            processed.append(url)
     return processed
 
 def main(urls, verbose, include_risk, include_all, product_mode, stats_flag, rate, brute, json_output):
