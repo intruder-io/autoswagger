@@ -457,7 +457,7 @@ def is_large_response(content):
         pass
     return False
 
-def test_parameter_values(method, base_url_no_path, full_path, parameters, request_body, content_type, rate, include_all, verbose, brute=False):
+def test_parameter_values(method, base_url_no_path, full_path, parameters, request_body, content_type, rate, include_all, verbose, brute=False, token=None, cookie=None):
     """
     Tests parameter values for a given method/endpoint.
     If brute is false, only a single default set is tested.
@@ -481,7 +481,7 @@ def test_parameter_values(method, base_url_no_path, full_path, parameters, reque
     if not brute:
         response = send_request(
             method, base_url_no_path, full_path, parameters,
-            value_mapping, request_body, content_type, rate, include_all, verbose
+            value_mapping, request_body, content_type, rate, include_all, verbose, token=token, cookie=cookie
         )
         return [response] if response else []
 
@@ -509,7 +509,7 @@ def test_parameter_values(method, base_url_no_path, full_path, parameters, reque
                 val_map = {n: v for n, v in zip(value_mapping.keys(), combo)}
                 resp = send_request(
                     method, base_url_no_path, full_path, parameters,
-                    val_map, request_body, content_type, rate, include_all, verbose
+                    val_map, request_body, content_type, rate, include_all, verbose, token=token, cookie=cookie
                 )
                 if resp:
                     return [resp]
@@ -525,7 +525,7 @@ def test_parameter_values(method, base_url_no_path, full_path, parameters, reque
                     val_map = {n: v for n, v in zip(value_mapping.keys(), combo)}
                     resp = send_request(
                         method, base_url_no_path, full_path, parameters,
-                        val_map, request_body, content_type, rate, include_all, verbose
+                        val_map, request_body, content_type, rate, include_all, verbose, token=token, cookie=cookie
                     )
                     if resp:
                         max_clen = resp['content_length']
@@ -535,7 +535,7 @@ def test_parameter_values(method, base_url_no_path, full_path, parameters, reque
                             val_map2 = {n: v2 for n, v2 in zip(value_mapping.keys(), combo2)}
                             resp2 = send_request(
                                 method, base_url_no_path, full_path, parameters,
-                                val_map2, request_body, content_type, rate, include_all, verbose
+                                val_map2, request_body, content_type, rate, include_all, verbose, token=token, cookie=cookie
                             )
                             if resp2 and resp2['content_length'] > max_clen:
                                 max_clen = resp2['content_length']
@@ -543,7 +543,7 @@ def test_parameter_values(method, base_url_no_path, full_path, parameters, reque
                         return [best_response]
     return []
 
-def send_request(method, base_url_no_path, full_path, parameters, value_mapping, request_body, content_type, rate, include_all, verbose):
+def send_request(method, base_url_no_path, full_path, parameters, value_mapping, request_body, content_type, rate, include_all, verbose, token=None, cookie=None):
     """
     Sends a request to the computed endpoint, respecting rate limit.
     Decodes the response, checks for secrets, PII (via line-based CSV and key:value scanning),
@@ -568,6 +568,10 @@ def send_request(method, base_url_no_path, full_path, parameters, value_mapping,
             full_url = urljoin(base_url_no_path, substituted_path)
 
     headers = {'Content-Type': content_type} if content_type else {}
+    if token:
+        headers['Authorization'] = token
+    if cookie:
+        headers['Cookie'] = cookie
     data = request_body if method.upper() in ['POST', 'PUT', 'PATCH'] else None
 
     try:
@@ -743,7 +747,7 @@ def send_request(method, base_url_no_path, full_path, parameters, value_mapping,
 
 def test_endpoint(base_url, base_path, path_template, method, parameters, request_body=None,
                   content_type=None, verbose=False, rate=30, include_all=False,
-                  product_mode=False, brute=False):
+                  product_mode=False, brute=False, token=None, cookie=None):
     """
     Tests a single endpoint (method + path_template).
     Prepares final path by combining base_path with path_template, then calls test_parameter_values.
@@ -763,7 +767,7 @@ def test_endpoint(base_url, base_path, path_template, method, parameters, reques
         start_time = time.time()
         endpoint_results = test_parameter_values(
             method, base_url_no_path, full_path, parameters,
-            request_body, content_type, rate, include_all, verbose, brute=brute
+            request_body, content_type, rate, include_all, verbose, brute=brute, token=token, cookie=cookie
         )
         if endpoint_results:
             results.extend(endpoint_results)
@@ -779,7 +783,7 @@ def test_endpoint(base_url, base_path, path_template, method, parameters, reques
 
 def test_endpoints(base_url, base_path, swagger_spec, verbose=False,
                    include_risk=False, include_all=False, product_mode=False,
-                   rate=30, tried_basepath_fallback=False, brute=False):
+                   rate=30, tried_basepath_fallback=False, brute=False, token=None, cookie=None):
     """
     Iterates over all paths and methods in the provided swagger_spec.
     Submits tasks to test_endpoint if the method is allowed (GET or others if -risk).
@@ -829,7 +833,7 @@ def test_endpoints(base_url, base_path, swagger_spec, verbose=False,
                             base_url, base_path, path, mthd,
                             parameters, request_body, ct,
                             verbose, rate, include_all,
-                            product_mode=product_mode, brute=brute
+                            product_mode=product_mode, brute=brute, token=token, cookie=cookie
                         )
                         future_to_endpoint[fut] = (mthd, path, ct)
                 else:
@@ -845,7 +849,7 @@ def test_endpoints(base_url, base_path, swagger_spec, verbose=False,
                         base_url, base_path, path, mthd,
                         parameters, request_body, 'application/json',
                         verbose, rate, include_all,
-                        product_mode=product_mode, brute=brute
+                        product_mode=product_mode, brute=brute, token=token, cookie=cookie
                     )
                     future_to_endpoint[fut] = (mthd, path, 'application/json')
 
@@ -873,7 +877,7 @@ def test_endpoints(base_url, base_path, swagger_spec, verbose=False,
                 fallback = test_endpoints(
                     base_url, '/', swagger_spec, verbose,
                     include_risk, include_all, product_mode=product_mode,
-                    rate=rate, tried_basepath_fallback=True, brute=brute
+                    rate=rate, tried_basepath_fallback=True, brute=brute, token=token, cookie=cookie
                 )
                 return fallback
 
@@ -1125,7 +1129,7 @@ def process_input(urls):
         processed.append(url)
     return processed
 
-def main(urls, verbose, include_risk, include_all, product_mode, stats_flag, rate, brute, json_output):
+def main(urls, verbose, include_risk, include_all, product_mode, stats_flag, rate, brute, json_output, token=None, cookie=None):
     """
     Main function controlling flow:
     1. Tracks start time
@@ -1185,7 +1189,7 @@ def main(urls, verbose, include_risk, include_all, product_mode, stats_flag, rat
                 rslts = test_endpoints(
                     base_url, base_path, swagger_spec,
                     verbose, include_risk, include_all,
-                    product_mode=product_mode, rate=rate, brute=brute
+                    product_mode=product_mode, rate=rate, brute=brute, token=token, cookie=cookie
                 )
                 del swagger_spec
                 with results_lock:
@@ -1222,7 +1226,7 @@ def main(urls, verbose, include_risk, include_all, product_mode, stats_flag, rat
             rslts = test_endpoints(
                 base_url, base_path, swagger_spec,
                 verbose, include_risk, include_all,
-                product_mode=product_mode, rate=rate, brute=brute
+                product_mode=product_mode, rate=rate, brute=brute, token=token, cookie=cookie
             )
             del swagger_spec
             with results_lock:
@@ -1259,7 +1263,7 @@ def main(urls, verbose, include_risk, include_all, product_mode, stats_flag, rat
                 rslts2 = test_endpoints(
                     base_url, base_path, sws,
                     verbose, include_risk, include_all,
-                    product_mode=product_mode, rate=rate, brute=brute
+                    product_mode=product_mode, rate=rate, brute=brute, token=token, cookie=cookie
                 )
                 del sws
                 with results_lock:
@@ -1464,6 +1468,8 @@ if __name__ == "__main__":
     parser.add_argument("-rate", type=int, default=30, help="Set the rate limit in requests per second (default: 30). Use 0 to disable rate limiting.")
     parser.add_argument("-b", "--brute", action="store_true", help="Enable exhaustive testing of parameter values.")
     parser.add_argument("-json", action="store_true", help="Output results in JSON format in default mode.")
+    parser.add_argument("--token", type=str, help="Value to send as Authorization header for protected endpoints")
+    parser.add_argument("--cookie", type=str, help="Cookie string to send with requests (e.g., 'session=abc123; token=xyz')")
 
     args = parser.parse_args()
 
@@ -1485,6 +1491,8 @@ if __name__ == "__main__":
     rate = args.rate
     brute = args.brute
     json_output = args.json
+    token = args.token
+    cookie = args.cookie
 
     # Set up file logging if verbose is enabled
     if verbose:
@@ -1498,4 +1506,4 @@ if __name__ == "__main__":
         logger.addHandler(file_handler)
         logger.propagate = False
 
-    main(urls, verbose, include_risk, include_all, product_mode, stats_flag, rate, brute, json_output)
+    main(urls, verbose, include_risk, include_all, product_mode, stats_flag, rate, brute, json_output, token, cookie)
