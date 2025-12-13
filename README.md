@@ -91,7 +91,7 @@ Autoswagger automates the process of finding **OpenAPI/Swagger** specifications,
 | `-rate <N>`          | Throttles requests to N requests per second. Default is 30. Use 0 to disable rate limiting.                  |
 | `-b, --brute`        | Enables brute-forcing of parameter values (multiple test combos).                                            |
 | `-json`              | Outputs results in JSON format instead of a Rich table in default mode.                                      |
-
+| `-exclude <...>` | Excludes endpoints whose path contains any of the given substrings.                                              |
 
 ## Help
 
@@ -106,7 +106,7 @@ Autoswagger automates the process of finding **OpenAPI/Swagger** specifications,
                               https://intruder.io
                           Find unauthenticated endpoints
 
-usage: autoswagger.py [-h] [-v] [-risk] [-all] [-product] [-stats] [-rate RATE] [-b] [-json] [urls ...]
+usage: autoswagger.py [-h] [-v] [-risk] [-all] [-product] [-stats] [-rate RATE] [-b] [-json] [-exclude [EXCLUDE ...]] [urls ...] 
 
 Autoswagger: Detect unauthenticated access control issues via Swagger/OpenAPI documentation.
 
@@ -123,6 +123,7 @@ options:
   -rate RATE     Set the rate limit in requests per second (default: 30). Use 0 to disable rate limiting.
   -b, --brute    Enable exhaustive testing of parameter values.
   -json          Output results in JSON format in default mode.
+  -exclude       Exclude endpoints whose path contains any of the given substrings
 
 Example usage:
   python autoswagger.py https://api.example.com -v
