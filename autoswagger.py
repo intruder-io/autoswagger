@@ -127,6 +127,9 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 # Default request timeout
 TIMEOUT = 10
 
+# Global proxy settings (set via --proxy argument)
+PROXY_SETTINGS = None
+
 # Paths for detecting swagger/openapi specs in UI or direct spec endpoints
 SWAGGER_UI_PATHS = sorted({
     "/", "/apidocs/", "/swagger/ui/index", "/swagger/index.html", "/swagger-ui.html",
@@ -165,7 +168,14 @@ DIRECT_SPEC_PATHS = sorted({
     "/spec/swagger.yaml", "/spec/openapi.json", "/spec/openapi.yaml",
     "/api-docs/swagger-ui.json", "/api-docs/swagger-ui.yaml",
     "/api-docs/openapi.json", "/api-docs/openapi.yaml",
-    "/swagger-ui.json", "/swagger-ui.yaml"
+    "/swagger-ui.json", "/swagger-ui.yaml",
+    # Paths that return JSON directly without file extension
+    "/api-docs", "/api-docs/", "/apidocs", "/apidocs/",
+    "/v2/api-docs", "/v2/api-docs/", "/v3/api-docs", "/v3/api-docs/",
+    "/api/v2/api-docs", "/api/v3/api-docs",
+    "/swagger/docs", "/swagger/docs/",
+    "/documentation/json", "/documentation/yaml",
+    "/api/documentation", "/api/documentation/",
 })
 
 # Regex patterns for secrets (similar to TruffleHog)
@@ -577,7 +587,8 @@ def send_request(method, base_url_no_path, full_path, parameters, value_mapping,
 
         response = requests.request(
             method, full_url, headers=headers, data=data,
-            verify=False, allow_redirects=False, timeout=TIMEOUT
+            verify=False, allow_redirects=False, timeout=TIMEOUT,
+            proxies=PROXY_SETTINGS
         )
         status_code = response.status_code
 
@@ -686,6 +697,7 @@ def send_request(method, base_url_no_path, full_path, parameters, value_mapping,
             "pii_detected": pii_detected,
             "pii_data": None,
             "pii_detection_details": None,
+            "pii_detection_methods": list(pii_detection_methods),
             "interesting_response": interesting_response,
             "regex_patterns_found": {}
         }
@@ -720,6 +732,7 @@ def send_request(method, base_url_no_path, full_path, parameters, value_mapping,
                 }
             result["pii_detection_details"] = detection_details
             result["pii_detected"] = True
+            result["pii_detection_methods"] = list(pii_detection_methods)
             if (status_code == 200 or (include_all and status_code == 404)):
                 interesting_response = True
             result["interesting_response"] = interesting_response
@@ -749,14 +762,22 @@ def test_endpoint(base_url, base_path, path_template, method, parameters, reques
     Prepares final path by combining base_path with path_template, then calls test_parameter_values.
     Returns a list of results from that function.
     """
+    # Handle case where base_path is a full URL (common in OpenAPI 3.x servers array)
+    parsed_base_path = urlparse(base_path) if base_path else None
+    if parsed_base_path and parsed_base_path.scheme in ['http', 'https']:
+        # base_path is a full URL like "http://localhost:5000" or "http://localhost:5000/api"
+        base_url_no_path = f"{parsed_base_path.scheme}://{parsed_base_path.netloc}"
+        base_path = parsed_base_path.path if parsed_base_path.path else '/'
+    else:
+        parsed_base_url = urlparse(base_url)
+        base_url_no_path = f"{parsed_base_url.scheme}://{parsed_base_url.netloc}"
+
     if base_path and not base_path.startswith("/"):
         base_path = "/" + base_path
     if base_path.endswith("/"):
         base_path = base_path[:-1]
 
     full_path = base_path + path_template
-    parsed_base_url = urlparse(base_url)
-    base_url_no_path = f"{parsed_base_url.scheme}://{parsed_base_url.netloc}"
 
     results = []
     try:
@@ -882,32 +903,55 @@ def test_endpoints(base_url, base_path, swagger_spec, verbose=False,
 def fetch_swagger_spec(url, verbose=False):
     """
     Attempts to fetch and parse an OpenAPI/Swagger spec from a given URL.
-    Checks if response code is 200, content is JSON/YAML, and contains 'swagger'/'openapi'.
+    Checks if response code is 200 and content contains 'swagger'/'openapi'.
+    Tries to parse as JSON first, then YAML, regardless of content-type header.
     Returns the parsed spec as a dictionary or None if unsuccessful.
     """
     if verbose:
         log(f"Fetching Swagger/OpenAPI spec directly from {url}", level="DEBUG")
     try:
-        resp = requests.get(url, verify=False, timeout=TIMEOUT)
+        resp = requests.get(url, verify=False, timeout=TIMEOUT, proxies=PROXY_SETTINGS)
         ctype = resp.headers.get('Content-Type', '').lower()
-        if resp.status_code == 200 and any(x in ctype for x in ['json','yaml','text/plain']):
-            if 'swagger' in resp.text.lower() or 'openapi' in resp.text.lower():
-                try:
-                    if 'json' in ctype:
-                        spec = resp.json()
-                    else:
-                        spec = yaml.safe_load(resp.text)
-                    if verbose:
-                        log("Successfully loaded spec.", level="SUCCESS")
-                    return spec
-                except (json.JSONDecodeError, yaml.YAMLError) as perr:
-                    if verbose:
-                        log(f"Error decoding spec from {url}: {perr}", level="DEBUG")
-                        log(f"Failed to parse spec from {url}", level="DEBUG")
-        else:
+
+        if resp.status_code != 200:
             if verbose:
                 log(f"Invalid response from {url}: {resp.status_code}, Content-Type: {ctype}", level="WARNING")
-                log(f"Failed to parse spec from {url}", level="DEBUG")
+            return None
+
+        content = resp.text
+
+        # Check if content looks like a swagger/openapi spec
+        if 'swagger' not in content.lower() and 'openapi' not in content.lower():
+            if verbose:
+                log(f"Response from {url} does not contain swagger/openapi keywords", level="DEBUG")
+            return None
+
+        # Try to parse as JSON first (most common), then YAML
+        spec = None
+
+        # First try JSON parsing
+        try:
+            spec = json.loads(content)
+            if verbose:
+                log("Successfully loaded spec as JSON.", level="SUCCESS")
+            return spec
+        except json.JSONDecodeError:
+            pass
+
+        # If JSON fails, try YAML
+        try:
+            spec = yaml.safe_load(content)
+            if spec and isinstance(spec, dict):
+                if verbose:
+                    log("Successfully loaded spec as YAML.", level="SUCCESS")
+                return spec
+        except yaml.YAMLError:
+            pass
+
+        if verbose:
+            log(f"Failed to parse spec from {url} as JSON or YAML", level="DEBUG")
+        return None
+
     except requests.exceptions.RequestException as e:
         if verbose:
             log(f"Error fetching Swagger/OpenAPI spec from {url}: {e}", level="DEBUG")
@@ -925,7 +969,7 @@ def find_swagger_ui_docs(base_url, verbose=False):
         if verbose:
             log(f"Checking Swagger UI page at {swagger_ui_url}", level="DEBUG")
         try:
-            r = requests.get(swagger_ui_url, verify=False, allow_redirects=False, timeout=TIMEOUT)
+            r = requests.get(swagger_ui_url, verify=False, allow_redirects=False, timeout=TIMEOUT, proxies=PROXY_SETTINGS)
             if r.status_code == 200 and ('swagger' in r.text.lower() or 'openapi' in r.text.lower()):
                 if verbose:
                     log(f"Swagger UI found at {swagger_ui_url}", level="DEBUG")
@@ -943,7 +987,7 @@ def find_swagger_ui_docs(base_url, verbose=False):
                             log(f"Spec URL does not have a valid spec extension: {full_spec_url}", level="DEBUG")
                         if full_spec_url.lower().endswith('.js'):
                             try:
-                                js_r = requests.get(full_spec_url, verify=False, timeout=TIMEOUT)
+                                js_r = requests.get(full_spec_url, verify=False, timeout=TIMEOUT, proxies=PROXY_SETTINGS)
                                 if js_r.status_code == 200:
                                     if verbose:
                                         log(f"Attempting to extract embedded spec from JS file: {full_spec_url}", level="DEBUG")
@@ -967,7 +1011,7 @@ def find_swagger_ui_docs(base_url, verbose=False):
                     if verbose:
                         log(f"Fetching JS file: {jsu}", level="DEBUG")
                     try:
-                        js_resp = requests.get(jsu, verify=False, timeout=TIMEOUT)
+                        js_resp = requests.get(jsu, verify=False, timeout=TIMEOUT, proxies=PROXY_SETTINGS)
                         if js_resp.status_code == 200:
                             spec_url_js = extract_spec_url_from_js(js_resp.text)
                             if spec_url_js:
@@ -981,7 +1025,7 @@ def find_swagger_ui_docs(base_url, verbose=False):
                                 else:
                                     if full_spec_url_js.lower().endswith('.js'):
                                         try:
-                                            nested_js = requests.get(full_spec_url_js, verify=False, timeout=TIMEOUT)
+                                            nested_js = requests.get(full_spec_url_js, verify=False, timeout=TIMEOUT, proxies=PROXY_SETTINGS)
                                             if nested_js.status_code == 200:
                                                 emb2 = extract_spec_from_js(nested_js.text)
                                                 if emb2 and isinstance(emb2, dict):
@@ -1125,6 +1169,62 @@ def process_input(urls):
         processed.append(url)
     return processed
 
+def is_localhost_url(url):
+    """
+    Checks if a URL points to localhost (127.0.0.1, localhost, 0.0.0.0, ::1).
+    Returns True if the URL is a localhost URL, False otherwise.
+    """
+    if not url:
+        return False
+    parsed = urlparse(url)
+    host = parsed.netloc.lower() if parsed.netloc else parsed.path.split('/')[0].lower()
+    # Remove port if present
+    host = host.split(':')[0]
+    localhost_hosts = {'localhost', '127.0.0.1', '0.0.0.0', '::1', '[::1]'}
+    return host in localhost_hosts
+
+def get_base_path_from_spec(swagger_spec, input_url, verbose=False):
+    """
+    Extracts the base path from a swagger/openapi spec.
+    Filters out localhost servers when scanning a remote URL.
+    Falls back to the input URL's path or '/' if no valid servers are found.
+
+    :param swagger_spec: The parsed swagger/openapi specification
+    :param input_url: The original input URL used to fetch the spec
+    :param verbose: Whether to log verbose output
+    :return: The base path to use for endpoint testing
+    """
+    parsed_input = urlparse(input_url)
+    input_is_localhost = is_localhost_url(input_url)
+
+    # Check OpenAPI 3.x servers array
+    if 'servers' in swagger_spec and isinstance(swagger_spec['servers'], list) and swagger_spec['servers']:
+        valid_servers = []
+        for server in swagger_spec['servers']:
+            server_url = server.get('url', '')
+            if not server_url:
+                continue
+            # If input is remote, filter out localhost servers
+            if not input_is_localhost and is_localhost_url(server_url):
+                if verbose:
+                    log(f"Discarding localhost server from spec: {server_url}", level="DEBUG")
+                continue
+            valid_servers.append(server_url)
+
+        if valid_servers:
+            return valid_servers[0]
+        else:
+            # All servers were localhost, use input URL's base
+            if verbose:
+                log("All servers in spec are localhost, using input URL instead", level="DEBUG")
+            return '/'
+
+    # Check Swagger 2.0 basePath
+    elif 'basePath' in swagger_spec:
+        return swagger_spec.get('basePath', '/')
+
+    return '/'
+
 def main(urls, verbose, include_risk, include_all, product_mode, stats_flag, rate, brute, json_output):
     """
     Main function controlling flow:
@@ -1165,21 +1265,26 @@ def main(urls, verbose, include_risk, include_all, product_mode, stats_flag, rat
         with lock:
             stats["active_hosts"] += 1
 
-        # Check if the URL might be a direct spec (ends with .json/.yaml/.yml)
-        if any(base_url.lower().endswith(ext) for ext in ['.json', '.yaml', '.yml']):
+        # Check if the URL might be a direct spec (ends with .json/.yaml/.yml or returns JSON/YAML directly)
+        # First try URLs with known extensions
+        is_known_extension = any(base_url.lower().endswith(ext) for ext in ['.json', '.yaml', '.yml'])
+
+        # Also try fetching any URL directly that looks like it could be an API docs endpoint
+        # (e.g., /api-docs/, /api-docs, /swagger, /openapi, etc.)
+        looks_like_spec_url = any(pattern in base_url.lower() for pattern in [
+            '/api-docs', '/apidocs', '/swagger', '/openapi', '/v2/api-docs', '/v3/api-docs'
+        ])
+
+        if is_known_extension or looks_like_spec_url:
             if not product_mode:
-                log(f"Processing direct spec URL: {base_url}", level="INFO")
+                log(f"Processing potential spec URL: {base_url}", level="INFO")
             swagger_spec = fetch_swagger_spec(base_url, verbose)
             if swagger_spec:
                 with lock:
                     stats["hosts_with_valid_spec"] += 1
                 if not product_mode:
                     log("Successfully loaded spec.", level="INFO")
-                base_path = '/'
-                if 'servers' in swagger_spec and isinstance(swagger_spec['servers'], list) and swagger_spec['servers']:
-                    base_path = swagger_spec['servers'][0].get('url', '/')
-                elif 'basePath' in swagger_spec:
-                    base_path = swagger_spec.get('basePath', '/')
+                base_path = get_base_path_from_spec(swagger_spec, base_url, verbose)
                 if not product_mode:
                     log("Scanning endpoints.", level="INFO")
                 rslts = test_endpoints(
@@ -1198,12 +1303,14 @@ def main(urls, verbose, include_risk, include_all, product_mode, stats_flag, rat
                                 stats["pii_detection_methods"].update(rr['pii_detection_methods'])
                                 stats["regexes_found"].update(rr['regex_patterns_found'].values())
                 return
-            else:
+            elif is_known_extension:
+                # Only fail immediately if it was a known spec extension that failed
                 if verbose:
                     log(f"Failed to parse spec from {base_url}", level="DEBUG")
                 with lock:
                     bad_hosts.add(host)
                 return
+            # If it looked like a spec URL but failed, continue with other detection methods
 
         # Phase 1 & 2: Look for swagger UI
         swagger_spec = find_swagger_ui_docs(base_url, verbose)
@@ -1212,11 +1319,7 @@ def main(urls, verbose, include_risk, include_all, product_mode, stats_flag, rat
                 stats["hosts_with_valid_spec"] += 1
             if not product_mode:
                 log(f"Spec identified via Swagger-UI detection.", level="INFO")
-            base_path = '/'
-            if 'servers' in swagger_spec and isinstance(swagger_spec['servers'], list) and swagger_spec['servers']:
-                base_path = swagger_spec['servers'][0].get('url', '/')
-            elif 'basePath' in swagger_spec:
-                base_path = swagger_spec.get('basePath', '/')
+            base_path = get_base_path_from_spec(swagger_spec, base_url, verbose)
             if not product_mode:
                 log("Scanning endpoints.", level="INFO")
             rslts = test_endpoints(
@@ -1249,11 +1352,7 @@ def main(urls, verbose, include_risk, include_all, product_mode, stats_flag, rat
                     stats["hosts_with_valid_spec"] += 1
                 if not product_mode:
                     log(f"Spec identified via direct path detection: {spec_url}", level="INFO")
-                base_path = '/'
-                if 'servers' in sws and isinstance(sws['servers'], list) and sws['servers']:
-                    base_path = sws['servers'][0].get('url', '/')
-                elif 'basePath' in sws:
-                    base_path = sws.get('basePath', '/')
+                base_path = get_base_path_from_spec(sws, base_url, verbose)
                 if not product_mode:
                     log("Scanning endpoints.", level="INFO")
                 rslts2 = test_endpoints(
@@ -1414,6 +1513,8 @@ def main(urls, verbose, include_risk, include_all, product_mode, stats_flag, rat
                     ]
                     if include_risk:
                         body_content = rr['body'] if rr['body'] else ""
+                        if not isinstance(body_content, str):
+                            body_content = str(body_content)
                         row.append(body_content)
                     table.add_row(*row)
 
@@ -1464,6 +1565,7 @@ if __name__ == "__main__":
     parser.add_argument("-rate", type=int, default=30, help="Set the rate limit in requests per second (default: 30). Use 0 to disable rate limiting.")
     parser.add_argument("-b", "--brute", action="store_true", help="Enable exhaustive testing of parameter values.")
     parser.add_argument("-json", action="store_true", help="Output results in JSON format in default mode.")
+    parser.add_argument("-proxy", "--proxy", type=str, help="Proxy URL for all requests (e.g., http://127.0.0.1:8080)")
 
     args = parser.parse_args()
 
@@ -1485,6 +1587,13 @@ if __name__ == "__main__":
     rate = args.rate
     brute = args.brute
     json_output = args.json
+
+    # Set up proxy settings
+    if args.proxy:
+        PROXY_SETTINGS = {
+            'http': args.proxy,
+            'https': args.proxy
+        }
 
     # Set up file logging if verbose is enabled
     if verbose:
